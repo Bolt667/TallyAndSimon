@@ -1,42 +1,234 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
+import { useEffect, useMemo, useState } from 'react';
+import { auth, db, storage } from './firebase';
+import {
+  signInAnonymously,
+  onAuthStateChanged,
+  signInWithCustomToken,
+} from 'firebase/auth';
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
+export default function App() {
+  // App + Firebase state
+  const [isReady, setIsReady] = useState(false);
+  const [userId, setUserId] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [message, setMessage] = useState({ type: 'idle', text: '' });
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
+  // App ID (so you can run multiple galleries if you want)
+  const appId =
+    import.meta.env.VITE_APP_ID && import.meta.env.VITE_APP_ID.trim() !== ''
+      ? import.meta.env.VITE_APP_ID
+      : 'default-app-id';
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
+  // Optional custom token (if you’re issuing one from your backend)
+  const customToken =
+    import.meta.env.VITE_CUSTOM_AUTH_TOKEN &&
+    import.meta.env.VITE_CUSTOM_AUTH_TOKEN.trim() !== ''
+      ? import.meta.env.VITE_CUSTOM_AUTH_TOKEN
+      : null;
 
-.card {
-  padding: 2em;
-}
+  // Build a stable reference to the collection
+  const photosCollection = useMemo(() => {
+    return collection(db, 'artifacts', appId, 'public', 'data', 'guest_photos');
+  }, [appId]);
 
-.read-the-docs {
-  color: #888;
+  // Auth initialisation with proper cleanup
+  useEffect(() => {
+    let unsubscribeAuth = () => {};
+
+    (async () => {
+      try {
+        if (customToken) {
+          await signInWithCustomToken(auth, customToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+
+        unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+          if (user) {
+            setUserId(user.uid);
+            setIsReady(true);
+          } else {
+            setIsReady(false);
+          }
+        });
+      } catch (err) {
+        console.error('Auth init error:', err);
+        setMessage({
+          type: 'error',
+          text: 'Failed to initialize authentication. Check console.',
+        });
+      }
+    })();
+
+    return () => {
+      try {
+        unsubscribeAuth && unsubscribeAuth();
+      } catch {}
+    };
+  }, [customToken]);
+
+  // Live Firestore listener
+  useEffect(() => {
+    const q = query(photosCollection, orderBy('timestamp', 'desc'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setPhotos(list);
+      },
+      (err) => {
+        console.error('Snapshot error:', err);
+        setMessage({
+          type: 'error',
+          text: 'Failed to load photos (rules?). Check console.',
+        });
+      }
+    );
+    return () => unsubscribe();
+  }, [photosCollection]);
+
+  // Upload handler
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setMessage({ type: 'error', text: 'Please select a file.' });
+      return;
+    }
+    if (!isReady || !userId) {
+      setMessage({
+        type: 'error',
+        text: 'Still signing in… try again in a moment.',
+      });
+      return;
+    }
+
+    setUploading(true);
+    setMessage({ type: 'idle', text: '' });
+
+    try {
+      const uniqueName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const objectRef = ref(storage, `wedding-photos/${uniqueName}`);
+
+      await uploadBytes(objectRef, file, { contentType: file.type });
+      const url = await getDownloadURL(objectRef);
+
+      await addDoc(photosCollection, {
+        url,
+        filename: file.name,
+        timestamp: serverTimestamp(),
+        uploaderId: userId,
+      });
+
+      setMessage({ type: 'success', text: 'Photo uploaded successfully!' });
+    } catch (err) {
+      console.error('Upload error:', err);
+      setMessage({ type: 'error', text: `Upload failed: ${err.message}` });
+    } finally {
+      setUploading(false);
+      e.target.value = null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen p-8 font-sans antialiased flex flex-col items-center">
+      <div className="w-full max-w-4xl bg-white rounded-xl shadow-lg p-6">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-extrabold text-gray-800">
+            Wedding Photo Gallery
+          </h1>
+          <p className="mt-2 text-lg text-gray-600">
+            Share your beautiful moments from the big day!
+          </p>
+        </header>
+
+        {/* Upload */}
+        <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-inner mb-8 text-center">
+          <p className="mb-4 text-gray-700 font-medium">Add a photo:</p>
+          <div className="relative inline-block w-48">
+            <input
+              type="file"
+              onChange={handleFileUpload}
+              className="absolute inset-0 z-50 w-full h-full opacity-0 cursor-pointer"
+              accept="image/*"
+              disabled={uploading || !isReady}
+            />
+            <button
+              className={`w-full py-3 px-6 rounded-lg font-bold text-white transition-all duration-300 transform ${
+                uploading || !isReady
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-lg hover:shadow-xl'
+              }`}
+              disabled={uploading || !isReady}
+            >
+              {uploading ? 'Uploading…' : 'Choose Photo'}
+            </button>
+          </div>
+          {message.text && (
+            <p
+              className={`mt-4 text-sm font-medium ${
+                message.type === 'success'
+                  ? 'text-green-600'
+                  : message.type === 'error'
+                  ? 'text-red-600'
+                  : 'text-gray-600'
+              }`}
+            >
+              {message.text}
+            </p>
+          )}
+          {!isReady && (
+            <p className="mt-2 text-xs text-gray-500">
+              Signing you in anonymously…
+            </p>
+          )}
+        </div>
+
+        {/* Gallery */}
+        <main>
+          {photos.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">
+              <p className="text-lg">No photos uploaded yet.</p>
+              <p>Be the first to share one!</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {photos.map((p) => (
+                <div
+                  key={p.id}
+                  className="relative aspect-square rounded-lg overflow-hidden shadow-md group"
+                >
+                  <img
+                    src={p.url}
+                    alt={p.filename || 'Wedding photo'}
+                    className="w-full h-full object-cover transition-transform duration-300 transform group-hover:scale-105"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-white text-sm font-bold bg-indigo-600 px-4 py-2 rounded-lg"
+                    >
+                      View
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
 }

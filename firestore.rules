@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // allow reads to your public artifacts
+    match /artifacts/{appId}/public/data/weddingPhotos/{docId} {
+      allow read: if true;             // public read
+      allow create: if request.auth != null;  // only signed-in (anon is fine)
+    }
+  }
+}

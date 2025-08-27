@@ -8,6 +8,29 @@
   </head>
   <body>
     <div id="root"></div>
+
+<script>
+/* Block any legacy Firebase Storage REST calls that cause CORS (o?name=...) */
+(function (X) {
+  if (!X || !X.prototype || !X.prototype.open) return;
+  const open = X.prototype.open;
+  X.prototype.open = function (method, url) {
+    try {
+      if (typeof url === "string" &&
+          url.includes("firebasestorage.googleapis.com") &&
+          url.includes("/o?name=")) {
+        console.warn("[guard] Blocked legacy REST upload:", url);
+        // short-circuit: never send this XHR
+        this.abort?.();
+        return;
+      }
+    } catch (_) {}
+    return open.apply(this, arguments);
+  };
+})(window.XMLHttpRequest);
+</script>
+
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
