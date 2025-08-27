@@ -38,6 +38,52 @@ const initialAuthToken =
 const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
 /* eslint-enable no-undef */
 
+/* ---------------- Password Gate Component ---------------- */
+function PasswordGate({ children }) {
+  const [ok, setOk] = useState(false);
+  const [pw, setPw] = useState("");
+  const [message, setMessage] = useState("");
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (pw === "sunshine") {
+      setOk(true);
+      setMessage("");
+    } else {
+      setMessage("Incorrect password. Please try again.");
+    }
+  };
+
+  if (ok) return children;
+
+  return (
+    <div className="bg-gray-100/90 p-6 sm:p-8 rounded-xl shadow-lg max-w-xl mx-auto space-y-4">
+      <h3 className="text-2xl font-bold text-center text-[#555]">
+        View Photo Gallery
+      </h3>
+      <p className="text-sm text-center text-gray-600">
+        Please enter the password to view the guest photo gallery.
+      </p>
+      <form onSubmit={submit} className="space-y-4">
+        <input
+          type="password"
+          placeholder="Password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#8c8266]"
+        />
+        <button
+          type="submit"
+          className="w-full p-3 bg-[#8c8266] text-white rounded-md font-semibold hover:bg-[#6c6450] transition-colors"
+        >
+          Enter
+        </button>
+      </form>
+      {message && <p className="text-red-600 text-center text-sm">{message}</p>}
+    </div>
+  );
+}
+
 /* ---------------- Main App ---------------- */
 // The core application component.
 export default function App() {
@@ -235,44 +281,45 @@ export default function App() {
             Guest Photo Gallery
           </h2>
 
-          {/* Upload form */}
-          <div className="bg-gray-100/90 p-6 sm:p-8 rounded-xl shadow-lg max-w-4xl mx-auto">
-            <h3 className="text-2xl font-bold text-center text-[#555] mb-6">
-              Upload Your Photos
-            </h3>
-            <form onSubmit={handlePhotoUpload} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input
-                  type="text"
-                  name="guestName"
-                  placeholder="Your Name (Optional)"
-                  className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#8c8266]"
-                />
-                <input
-                  type="file"
-                  name="photoFile"
-                  accept="image/*"
-                  required
-                  className="w-full p-2 border border-gray-300 rounded-md bg-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isLoading || !isAuthReady}
-                className="w-full bg-[#8c8266] text-white py-3 rounded-md font-semibold hover:bg-[#6c6450] transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? "Uploading..." : "Upload Photo"}
-              </button>
-            </form>
-            {uploadMessage.text && (
-              <p
-                className={`mt-4 text-center text-sm font-semibold ${
-                  uploadMessage.type === "success"
-                    ? "text-green-600"
-                    : uploadMessage.type === "error"
-                    ? "text-red-600"
-                    : "text-gray-600"
-                  }`}
+          <PasswordGate>
+            {/* Upload form */}
+            <div className="bg-gray-100/90 p-6 sm:p-8 rounded-xl shadow-lg max-w-4xl mx-auto">
+              <h3 className="text-2xl font-bold text-center text-[#555] mb-6">
+                Upload Your Photos
+              </h3>
+              <form onSubmit={handlePhotoUpload} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <input
+                    type="text"
+                    name="guestName"
+                    placeholder="Your Name (Optional)"
+                    className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#8c8266]"
+                  />
+                  <input
+                    type="file"
+                    name="photoFile"
+                    accept="image/*"
+                    required
+                    className="w-full p-2 border border-gray-300 rounded-md bg-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isLoading || !isAuthReady}
+                  className="w-full bg-[#8c8266] text-white py-3 rounded-md font-semibold hover:bg-[#6c6450] transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? "Uploading..." : "Upload Photo"}
+                </button>
+              </form>
+              {uploadMessage.text && (
+                <p
+                  className={`mt-4 text-center text-sm font-semibold ${
+                    uploadMessage.type === "success"
+                      ? "text-green-600"
+                      : uploadMessage.type === "error"
+                      ? "text-red-600"
+                      : "text-gray-600"
+                    }`}
                 >
                   {uploadMessage.text}
                 </p>
@@ -308,13 +355,14 @@ export default function App() {
                 </p>
               )}
             </div>
-          </div>
-        </section>
+          </PasswordGate>
+        </div>
+      </section>
 
-        {/* Footer */}
-        <footer className="bg-[#333] text-white text-center py-6">
-          <p className="text-sm">&copy; 2025 Talesa &amp; Simon. All rights reserved.</p>
-        </footer>
-      </div>
-    );
+      {/* Footer */}
+      <footer className="bg-[#333] text-white text-center py-6">
+        <p className="text-sm">&copy; 2025 Talesa &amp; Simon. All rights reserved.</p>
+      </footer>
+    </div>
+  );
 }
