@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8">
+<input type="file" id="f"><button id="u">Upload</button><pre id="o"></pre>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBDzWq0O6CM8VbrgusJUOHC45FMx0a8tKw",
+  authDomain: "wedding-website-dc15b.firebaseapp.com",
+  projectId: "wedding-website-dc15b",
+  storageBucket: "wedding-website-dc15b.appspot.com",
+  messagingSenderId: "922089864980",
+  appId: "1:922089864980:web:9c8557940e85b0799f8c01"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app), storage = getStorage(app);
+await signInAnonymously(auth);
+
+u.onclick = async () => {
+  const file = f.files[0]; if (!file) return;
+  const r = ref(storage, `wedding-photos/${Date.now()}_${file.name}`);
+  try {
+    await uploadBytes(r, file);
+    o.textContent = await getDownloadURL(r);
+  } catch(e) { o.textContent = e.message; }
+};
+</script>

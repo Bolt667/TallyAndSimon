@@ -17,28 +17,43 @@ import {
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 /* ---------------- Firebase config ---------------- */
-// A robust default configuration for Firebase services.
-const defaultFirebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSyBDzWq0O6CM8VbrgusJUOHC45FMx0a8tKw",
   authDomain: "wedding-website-dc15b.firebaseapp.com",
   projectId: "wedding-website-dc15b",
   storageBucket: "wedding-website-dc15b.appspot.com",
   messagingSenderId: "922089864980",
-  appId: "1:922089864980:web:9c8557940e85b0799f8c01",
+  appId: "1:922089864980:web:9c8557940e85b0799f8c01"
 };
 
-/* eslint-disable no-undef */
-// Use environment-injected variables if they exist, otherwise fall back to the default config.
-const firebaseConfig =
-  typeof __firebase_config !== "undefined"
-    ? JSON.parse(__firebase_config)
-    : defaultFirebaseConfig;
-const initialAuthToken =
-  typeof __initial_auth_token !== "undefined" ? __initial_auth_token : null;
-const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-/* eslint-enable no-undef */
+// Initialise once (outside the component)
+const app = initializeApp(firebaseConfig);
+const firestore = getFirestore(app);
+const authSvc = getAuth(app);
+const storageSvc = getStorage(app);
 
-/* ---------------- Password Gate Component ---------------- */
+/* ---------------- Helpers ---------------- */
+async function ensureAuth(initialAuthToken) {
+  // Wait for current state; if no user, sign in (custom or anonymous)
+  const user = authSvc.currentUser;
+  if (!user) {
+    if (initialAuthToken) {
+      await signInWithCustomToken(authSvc, initialAuthToken);
+    } else {
+      await signInAnonymously(authSvc);
+    }
+  }
+  // Return a user once auth is settled
+  return new Promise((resolve, reject) => {
+    const off = onAuthStateChanged(
+      authSvc,
+      (u) => { if (u) { off(); resolve(u); } },
+      (err) => { off(); reject(err); }
+    );
+  });
+}
+
+/* ---------------- Password Gate ---------------- */
 function PasswordGate({ children }) {
   const [ok, setOk] = useState(false);
   const [pw, setPw] = useState("");
@@ -58,9 +73,7 @@ function PasswordGate({ children }) {
 
   return (
     <div className="bg-gray-100/90 p-6 sm:p-8 rounded-xl shadow-lg max-w-xl mx-auto space-y-4">
-      <h3 className="text-2xl font-bold text-center text-[#555]">
-        View Photo Gallery
-      </h3>
+      <h3 className="text-2xl font-bold text-center text-[#555]">View Photo Gallery</h3>
       <p className="text-sm text-center text-gray-600">
         Please enter the password to view the guest photo gallery.
       </p>
@@ -85,91 +98,47 @@ function PasswordGate({ children }) {
 }
 
 /* ---------------- Main App ---------------- */
-// The core application component.
 export default function App() {
-  const [db, setDb] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [storage, setStorage] = useState(null);
   const [userId, setUserId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-
   const [photos, setPhotos] = useState([]);
   const [uploadMessage, setUploadMessage] = useState({ type: "idle", text: "" });
   const [isLoading, setIsLoading] = useState(false);
 
-  // Initialize Firebase services and user authentication.
+  // Replace these if you actually inject them; otherwise they’re null/safe defaults.
+  const initialAuthToken = null;
+  const appId = "default-app-id";
+
+  // Ensure auth once on mount
   useEffect(() => {
-    let unsubAuth;
+    let off = () => {};
     (async () => {
       try {
-        const app = initializeApp(firebaseConfig);
-        const firestore = getFirestore(app);
-        const authService = getAuth(app);
-        const storageService = getStorage(app);
-
-        setDb(firestore);
-        setAuth(authService);
-        setStorage(storageService);
-
-        // Listen for authentication state changes and sign in as needed.
-        unsubAuth = onAuthStateChanged(
-          authService,
-          async (user) => {
-            if (!user) {
-              try {
-                if (initialAuthToken) {
-                  await signInWithCustomToken(authService, initialAuthToken);
-                } else {
-                  await signInAnonymously(authService);
-                }
-              } catch (err) {
-                console.error("Auth sign-in error:", err);
-                setUploadMessage({
-                  type: "error",
-                  text: `Auth failed: ${err.code || err.message}`,
-                });
-                return;
-              }
-              return;
-            }
-            setUserId(user.uid);
+        await ensureAuth(initialAuthToken);
+        off = onAuthStateChanged(authSvc, (u) => {
+          if (u) {
+            setUserId(u.uid);
             setIsAuthReady(true);
-          },
-          (err) => {
-            console.error("Auth state error:", err);
-            setUploadMessage({
-              type: "error",
-              text: `Auth listener error: ${err.code || err.message}`,
-            });
           }
-        );
-      } catch (error) {
-        console.error("🔥 Firebase init failed:", error);
-        setUploadMessage({
-          type: "error",
-          text: `Could not connect: ${error.code || error.message}`,
         });
+      } catch (err) {
+        console.error("Auth error:", err);
+        setUploadMessage({ type: "error", text: `Auth failed: ${err.code || err.message}` });
       }
     })();
-
-    // Cleanup function to unsubscribe from the auth listener.
-    return () => {
-      if (typeof unsubAuth === "function") unsubAuth();
-    };
+    return () => { if (typeof off === "function") off(); };
   }, []);
 
-  // Set up a real-time listener for the photo gallery.
+  // Live photo feed
   useEffect(() => {
-    if (!isAuthReady || !db) return;
+    if (!isAuthReady) return;
     const photoCollectionPath = `artifacts/${appId}/public/data/weddingPhotos`;
-    const q = query(collection(db, photoCollectionPath));
-
+    const q = query(collection(firestore, photoCollectionPath));
     const unsub = onSnapshot(
       q,
       (snap) => {
         const items = [];
         snap.forEach((d) => items.push({ id: d.id, ...(d.data?.() ?? d.data()) }));
-        // Sort photos by timestamp locally to avoid needing a Firestore index.
         items.sort((a, b) => {
           const aTs = a?.timestamp?.toMillis?.() ?? 0;
           const bTs = b?.timestamp?.toMillis?.() ?? 0;
@@ -182,18 +151,16 @@ export default function App() {
         setUploadMessage({ type: "error", text: "Failed to load photos." });
       }
     );
-    // Cleanup function to unsubscribe from the Firestore listener.
     return () => unsub();
-  }, [isAuthReady, db]);
+  }, [isAuthReady, appId]);
 
-  // Handle the photo upload process.
+  // Upload handler
   async function handlePhotoUpload(e) {
     e.preventDefault();
-    if (!db || !userId || !storage || !isAuthReady) {
+    if (!userId || !isAuthReady) {
       setUploadMessage({ type: "error", text: "App is not ready. Please wait a moment." });
       return;
     }
-
     const form = e.currentTarget;
     const file = form.photoFile?.files?.[0];
     const guestName = form.guestName?.value?.trim() || "Anonymous";
@@ -208,12 +175,12 @@ export default function App() {
     try {
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `user-uploads/${userId}/${Date.now()}_${safeName}`;
+      const fileRef = ref(storageSvc, path);
 
-      const fileRef = ref(storage, path);
       await uploadBytes(fileRef, file);
       const url = await getDownloadURL(fileRef);
 
-      await addDoc(collection(db, `artifacts/${appId}/public/data/weddingPhotos`), {
+      await addDoc(collection(firestore, `artifacts/${appId}/public/data/weddingPhotos`), {
         url,
         guestName,
         timestamp: serverTimestamp(),
@@ -253,6 +220,72 @@ export default function App() {
         </div>
       </section>
 
+      {/* Welcome */}
+      <section className="py-16 sm:py-24 px-4 sm:px-8 bg-[#fcfaf7]/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-center gap-12 md:gap-16">
+          <div className="w-full md:w-1/2 flex justify-center">
+            <img
+              src="https://placehold.co/600x600/b8b8b8/fff?text=Welcome+Image"
+              alt="Welcome"
+              className="rounded-xl shadow-lg w-full max-w-md lg:max-w-lg object-cover"
+            />
+          </div>
+          <div className="w-full md:w-1/2 text-center md:text-left space-y-4">
+            <h2 className="text-3xl sm:text-4xl font-semibold font-serif text-[#555]">Welcome!</h2>
+            <p className="text-base sm:text-lg text-gray-700 leading-relaxed">
+              We are so excited to welcome you to Gibraltar for our wedding…
+            </p>
+            <p className="text-base sm:text-lg font-bold pt-4 text-[#555]">
+              With love,<br />Tally &amp; Simon
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Ceremony */}
+      <section className="py-16 sm:py-24 px-4 sm:px-8 bg-[#e9e4d9]/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row-reverse items-center justify-center gap-12 md:gap-16">
+          <div className="w-full md:w-1/2 flex justify-center">
+            <img
+              src="https://placehold.co/600x600/b8b8b8/fff?text=Ceremony+Image"
+              alt="The Ceremony"
+              className="rounded-xl shadow-lg w-full max-w-md lg:max-w-lg object-cover"
+            />
+          </div>
+          <div className="w-full md:w-1/2 text-center md:text-left space-y-4">
+            <h2 className="text-3xl sm:text-4xl font-semibold font-serif text-[#555]">The Ceremony</h2>
+            <p className="text-lg sm:text-xl font-bold text-gray-800">2:00 PM - Ceremony</p>
+            <p className="text-base sm:text-lg text-gray-700 leading-relaxed">
+              The Dell, Gibraltar Botanic Gardens. Please arrive by 1:45 PM.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Reception */}
+      <section className="py-16 sm:py-24 px-4 sm:px-8 bg-[#fcfaf7]/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-center gap-12 md:gap-16">
+          <div className="w-full md:w-1/2 flex justify-center">
+            <img
+              src="https://placehold.co/600x600/b8b8b8/fff?text=Reception+Image"
+              alt="The Reception"
+              className="rounded-xl shadow-lg w-full max-w-md lg:max-w-lg object-cover"
+            />
+          </div>
+          <div className="w-full md:w-1/2 text-center md:text-left space-y-4">
+            <h2 className="text-3xl sm:text-4xl font-semibold font-serif text-[#555]">The Reception</h2>
+            <div className="space-y-2">
+              <p className="text-lg sm:text-xl font-bold text-gray-800">17:00 - Welcome Drinks</p>
+              <p className="text-lg sm:text-xl font-bold text-gray-800">18:00 - Dinner Service</p>
+              <p className="text-lg sm:text-xl font-bold text-gray-800">20:00 - Late - Drinks, Dancing &amp; Mischief</p>
+            </div>
+            <p className="text-base sm:text-lg text-gray-700 leading-relaxed">
+              Wheel House, Sunborn Yacht Hotel.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Food & Drink */}
       <section className="py-16 sm:py-24 px-4 sm:px-8 bg-[#e9e4d9]/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row-reverse items-center justify-center gap-12 md:gap-16">
@@ -264,12 +297,8 @@ export default function App() {
             />
           </div>
           <div className="w-full md:w-1/2 text-center md:text-left space-y-6">
-            <h2 className="text-3xl sm:text-4xl font-semibold font-serif text-[#555]">
-              Food &amp; Drink
-            </h2>
-            <p className="text-base sm:text-lg text-gray-700">
-              Starters, mains, desserts, and signature cocktails…
-            </p>
+            <h2 className="text-3xl sm:text-4xl font-semibold font-serif text-[#555]">Food &amp; Drink</h2>
+            <p className="text-base sm:text-lg text-gray-700">Starters, mains, desserts, and signature cocktails…</p>
           </div>
         </div>
       </section>
@@ -280,13 +309,10 @@ export default function App() {
           <h2 className="text-4xl sm:text-5xl font-semibold font-serif text-center text-[#555] mb-8">
             Guest Photo Gallery
           </h2>
-
           <PasswordGate>
             {/* Upload form */}
             <div className="bg-gray-100/90 p-6 sm:p-8 rounded-xl shadow-lg max-w-4xl mx-auto">
-              <h3 className="text-2xl font-bold text-center text-[#555] mb-6">
-                Upload Your Photos
-              </h3>
+              <h3 className="text-2xl font-bold text-center text-[#555] mb-6">Upload Your Photos</h3>
               <form onSubmit={handlePhotoUpload} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <input
@@ -319,7 +345,7 @@ export default function App() {
                       : uploadMessage.type === "error"
                       ? "text-red-600"
                       : "text-gray-600"
-                    }`}
+                  }`}
                 >
                   {uploadMessage.text}
                 </p>
